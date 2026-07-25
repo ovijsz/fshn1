@@ -275,15 +275,6 @@ function uniqueVals(arr, field){
 function topNames(tab, ids, n){
   return (ids||[]).slice(0,n).map(id=> byId[tab][id]? byId[tab][id].title : null).filter(Boolean);
 }
-function lureTypeTally(lureIds){
-  const tally = {};
-  (lureIds||[]).forEach(id=>{
-    const l = byId.lures[id];
-    if(l && l.lureType){ tally[l.lureType] = (tally[l.lureType]||0) + 1; }
-  });
-  return Object.entries(tally).sort((a,b)=>b[1]-a[1]);
-}
-
 function renderTabs(){
   document.querySelectorAll('nav.tabs button').forEach(b=>{
     b.classList.toggle('active', b.dataset.tab===state.tab);
@@ -318,7 +309,7 @@ function matchesFilter(item, tab, f){
 function cardFor(tab, item){
   if(tab==='fish'){
     const baitNames = topNames('baits', item.baitIds, 3);
-    const lureNames = topNames('lures', item.lureIds, 2);
+    const lureNames = topNames('luretypes', item.lureIds, 2);
     const bitesOn = [...baitNames, ...lureNames].slice(0,3);
     return `<div class="card" data-open="fish:${item.id}">
       <div class="thumb">${imgTag(item.image, item.title)}</div>
@@ -378,18 +369,6 @@ function specChipsLures(ids){
       <div class="st"><div class="nm">${escapeHtml(l.title)}</div><div class="sp">${escapeHtml(l.lureType||'')}<br>${parts.join(' &middot; ')}</div></div></div>`;
   }).join('') + `</div>`;
 }
-function lureTypeRanking(lureIds){
-  const tally = lureTypeTally(lureIds);
-  if(!tally.length) return '<span style="color:var(--ink-dim); font-size:12.5px;">none in this data set</span>';
-  const max = tally[0][1];
-  return `<div class="rank-list">` + tally.map((row,i)=>{
-    const [name,count] = row;
-    const pct = Math.max(12, Math.round((count/max)*100));
-    return `<div class="rank-row"><span class="num">${i+1}</span><span class="nm">${escapeHtml(name)}</span>
-      <span class="bar" style="width:${pct}px;"></span><span class="cnt">${count}x</span></div>`;
-  }).join('') + `</div>`;
-}
-
 function openDetail(tab, id){
   const item = byId[tab][id];
   if(!item) return;
@@ -403,8 +382,26 @@ function openDetail(tab, id){
 }
 function closeDetail(){ document.getElementById('overlay').classList.remove('open'); }
 
+function lureTypeChips(typeIds){
+  if(!typeIds || !typeIds.length) return '<span style="color:var(--ink-dim); font-size:12.5px;">none in this data set</span>';
+  return `<div class="chip-row">` + typeIds.map(id=>{
+    const t = byId.luretypes[id];
+    if(!t) return `<div class="chip"><div class="noimg"></div>#${id}</div>`;
+    return `<div class="chip">${t.image?`<img src="${t.image}">`:`<div class="noimg"></div>`}${escapeHtml(t.title)}</div>`;
+  }).join('') + `</div>`;
+}
+function lureProductsForTypes(typeIds, perType){
+  const groups = [];
+  (typeIds||[]).forEach(id=>{
+    const t = byId.luretypes[id];
+    if(!t) return;
+    const all = DATA.lures.filter(l=>l.lureType===t.title);
+    groups.push({typeId:id, typeName:t.title, products: all.slice(0, perType), totalInType: all.length});
+  });
+  return groups;
+}
 function fishDetailHtml(item){
-  const lureTally = lureTypeTally(item.lureIds);
+  const lureGroups = lureProductsForTypes(item.lureIds, 6);
   return `
     <div class="hero">
       <button class="close">&times;</button>
@@ -415,23 +412,30 @@ function fishDetailHtml(item){
         <div class="stats">
           ${item.maxWeight? `<div class="stat"><b>${item.maxWeight} kg</b>max weight</div>`:''}
           <div class="stat"><b>${item.baitIds.length}</b>known baits</div>
-          <div class="stat"><b>${item.lureIds.length}</b>known lures</div>
+          <div class="stat"><b>${item.lureIds.length}</b>preferred lure types</div>
         </div>
       </div>
     </div>
     <div class="content">
       ${item.content?`<div>${item.content}</div>`:''}
       ${item.howToCatch?`<h3 class="section">How to catch</h3><div>${item.howToCatch}</div>`:''}
+
       <h3 class="section">Baits <span class="n">${item.baitIds.length} total</span></h3>
       ${specChipsBaits(item.baitIds)}
+
       <h3 class="section">Most used baits <span class="n">top picks</span></h3>
       ${specChipsBaits((item.baitIds||[]).slice(0,6))}
-      <h3 class="section">Lures <span class="n">${item.lureIds.length} total</span></h3>
-      ${specChipsLures(item.lureIds)}
-      <h3 class="section">Most used lures <span class="n">top picks</span></h3>
-      ${specChipsLures((item.lureIds||[]).slice(0,6))}
-      <h3 class="section">Most used lure types</h3>
-      ${lureTypeRanking(item.lureIds)}
+
+      <h3 class="section">Preferred lure types <span class="n">${item.lureIds.length} total</span></h3>
+      ${lureTypeChips(item.lureIds)}
+
+      <h3 class="section">Most used lures <span class="n">by type, with exact specs</span></h3>
+      ${lureGroups.length? lureGroups.map(g=>`
+        <div style="margin-bottom:14px;">
+          <div style="font-size:12.5px; color:var(--ink-dim); margin-bottom:6px;">${escapeHtml(g.typeName)} <span style="opacity:.6">(${g.totalInType} in catalog)</span></div>
+          ${g.products.length? specChipsLures(g.products.map(p=>p.id)) : '<span style="color:var(--ink-dim); font-size:12px;">no catalog items for this type yet</span>'}
+        </div>
+      `).join('') : '<span style="color:var(--ink-dim); font-size:12.5px;">none in this data set</span>'}
     </div>
   `;
 }
@@ -515,10 +519,11 @@ function init(){
   const m = DATA.meta;
   document.getElementById('metaLine').textContent =
     `fish ${DATA.fish.length}/${m.fishTotal} · baits ${DATA.baits.length}/${m.baitsTotal} · lures ${DATA.lures.length}/${m.luresTotal} · maps ${DATA.places.length}/${m.placesTotal}`;
-  document.getElementById('dataBanner').innerHTML =
-    `<b>Note:</b> this build ships a partial data set — fish ${DATA.fish.length} of ${m.fishTotal}, baits ${DATA.baits.length} of ${m.baitsTotal}, ` +
-    `lures ${DATA.lures.length} of ${m.luresTotal}, hooks ${DATA.hooks.length} of ${m.hooksTotal}, lure types ${DATA.luretypes.length} of ${m.luretypesTotal}, ` +
-    `maps ${DATA.places.length} of ${m.placesTotal}. Send the next API pages (page=2, page=3...) to grow <code>data.json</code>.`;
+  const allDone = DATA.fish.length>=m.fishTotal && DATA.baits.length>=m.baitsTotal && DATA.lures.length>=m.luresTotal &&
+    DATA.hooks.length>=m.hooksTotal && DATA.luretypes.length>=m.luretypesTotal && DATA.places.length>=m.placesTotal;
+  document.getElementById('dataBanner').innerHTML = allDone
+    ? `<b>Data coverage:</b> complete — fish ${DATA.fish.length}/${m.fishTotal}, baits ${DATA.baits.length}/${m.baitsTotal}, lures ${DATA.lures.length}/${m.luresTotal}, hooks ${DATA.hooks.length}/${m.hooksTotal}, lure types ${DATA.luretypes.length}/${m.luretypesTotal}, maps ${DATA.places.length}/${m.placesTotal}.`
+    : `<b>Data coverage:</b> fish ${DATA.fish.length}/${m.fishTotal}, baits ${DATA.baits.length}/${m.baitsTotal}, lures ${DATA.lures.length}/${m.luresTotal}, hooks ${DATA.hooks.length}/${m.hooksTotal}, lure types ${DATA.luretypes.length}/${m.luretypesTotal}, maps ${DATA.places.length}/${m.placesTotal}.`;
   render();
 }
 </script>
