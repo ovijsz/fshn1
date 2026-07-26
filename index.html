@@ -218,6 +218,7 @@
   </div>
   <nav class="tabs" id="tabs">
     <button data-tab="fish" class="active">Fish</button>
+    <button data-tab="gear">Gear</button>
     <button data-tab="places">Maps</button>
   </nav>
 </header>
@@ -246,10 +247,28 @@ let state = { tab:'fish', query:'', filter:'' };
 
 fetch('data.json').then(r=>r.json()).then(d=>{
   DATA = d;
-  ['fish','baits','lures','hooks','luretypes','places'].forEach(k=>{
+  ['fish','baits','lures','hooks','luretypes','places','jigheads','boilies','sinkers','keepnets'].forEach(k=>{
     byId[k] = {};
-    DATA[k].forEach(item=>{ byId[k][item.id] = item; });
+    (DATA[k]||[]).forEach(item=>{ byId[k][item.id] = item; });
   });
+  // unified gear list: every piece of tackle, tagged with its category, sorted by level
+  const gearDefs = [
+    ['baits','Bait'], ['lures','Lure'], ['hooks','Hook'], ['jigheads','Jighead'],
+    ['boilies','Boilie / Pellet'], ['sinkers','Sinker'], ['keepnets','Keepnet / Stringer'],
+  ];
+  DATA.gear = [];
+  gearDefs.forEach(([key,label])=>{
+    (DATA[key]||[]).forEach(item=>{
+      DATA.gear.push(Object.assign({}, item, {kind:label, kindKey:key, level: item.baseLevel||0}));
+    });
+  });
+  DATA.gear.sort((a,b)=> (a.level-b.level) || a.title.localeCompare(b.title));
+  byId.gearItems = {};
+  DATA.gear.forEach(g=>{
+    if(!byId.gearItems[g.kindKey]) byId.gearItems[g.kindKey] = {};
+    byId.gearItems[g.kindKey][g.id] = g;
+  });
+  DATA.places = (DATA.places||[]).slice().sort((a,b)=> (a.baseLevel||0)-(b.baseLevel||0));
   init();
 }).catch(err=>{
   document.getElementById('grid').innerHTML =
@@ -275,6 +294,17 @@ function uniqueVals(arr, field){
 function topNames(tab, ids, n){
   return (ids||[]).slice(0,n).map(id=> byId[tab][id]? byId[tab][id].title : null).filter(Boolean);
 }
+function parseOpenKey(s){
+  const parts = s.split(':');
+  if(parts[0]==='gear') return {tab:'gear', kindKey:parts[1], id:Number(parts[2])};
+  return {tab:parts[0], id:Number(parts[1])};
+}
+function bindOpenHandlers(root){
+  root.querySelectorAll('[data-open]').forEach(el=>{
+    el.onclick = ()=>{ const k = parseOpenKey(el.dataset.open); openDetail(k.tab, k.id, k.kindKey); };
+  });
+}
+
 function renderTabs(){
   document.querySelectorAll('nav.tabs button').forEach(b=>{
     b.classList.toggle('active', b.dataset.tab===state.tab);
@@ -283,6 +313,7 @@ function renderTabs(){
 
 function filterOptionsFor(tab){
   if(tab==='places') return uniqueVals(DATA.places,'type');
+  if(tab==='gear') return Array.from(new Set(DATA.gear.map(g=>g.kind)));
   return [];
 }
 function renderFilter(){
@@ -303,6 +334,7 @@ function matchesQuery(item, q){
 function matchesFilter(item, tab, f){
   if(!f) return true;
   if(tab==='places') return item.type===f;
+  if(tab==='gear') return item.kind===f;
   return true;
 }
 
@@ -327,6 +359,23 @@ function cardFor(tab, item){
         <div class="title">${escapeHtml(item.title)}</div>
         <div class="meta">${escapeHtml(item.locationName||'')}${item.type?' &middot; '+escapeHtml(item.type):''}</div>
         <div class="bites">${(item.fishIds||[]).length} fish species &middot; ${(item.monsterFishIds||[]).length} trophy fish</div>
+        ${item.baseLevel? `<div class="tag" style="align-self:flex-start; font-family:var(--font-mono); font-size:10px; color:var(--amber); border:1px solid var(--line); padding:2px 7px; border-radius:20px; margin-top:4px;">Lv. ${item.baseLevel}</div>`:''}
+      </div>
+    </div>`;
+  }
+  if(tab==='gear'){
+    const specs = [];
+    if(item.weight) specs.push(`${item.weight}${item.kindKey==='lures'||item.kindKey==='jigheads'?'g':''}`);
+    if(item.length) specs.push(`${item.length}cm`);
+    if(item.hookSize) specs.push(`hook ${item.hookSize}`);
+    if(item.size) specs.push(item.size);
+    return `<div class="card" data-open="gear:${item.kindKey}:${item.id}">
+      <div class="thumb">${imgTag(item.image, item.title)}</div>
+      <div class="body">
+        <div class="title">${escapeHtml(item.title)}</div>
+        <div class="meta">${escapeHtml(item.kind)}${item.lureType?' &middot; '+escapeHtml(item.lureType):''}${item.baitType?' &middot; '+escapeHtml(item.baitType):''}</div>
+        ${specs.length? `<div class="bites">${specs.map(escapeHtml).join(' &middot; ')}</div>`:''}
+        <div class="tag" style="align-self:flex-start; font-family:var(--font-mono); font-size:10px; color:var(--amber); border:1px solid var(--line); padding:2px 7px; border-radius:20px; margin-top:auto;">Lv. ${item.level}</div>
       </div>
     </div>`;
   }
@@ -341,9 +390,7 @@ function render(){
   document.getElementById('countTag').textContent = `showing ${list.length} / ${DATA[state.tab].length}`;
   grid.innerHTML = list.map(i=>cardFor(state.tab,i)).join('');
   document.getElementById('emptyMsg').style.display = list.length? 'none':'block';
-  grid.querySelectorAll('[data-open]').forEach(el=>{
-    el.onclick = ()=>{ const [tab,id] = el.dataset.open.split(':'); openDetail(tab, Number(id)); };
-  });
+  bindOpenHandlers(grid);
 }
 
 function specChipsBaits(ids){
@@ -369,16 +416,14 @@ function specChipsLures(ids){
       <div class="st"><div class="nm">${escapeHtml(l.title)}</div><div class="sp">${escapeHtml(l.lureType||'')}<br>${parts.join(' &middot; ')}</div></div></div>`;
   }).join('') + `</div>`;
 }
-function openDetail(tab, id){
-  const item = byId[tab][id];
+function openDetail(tab, id, kindKey){
+  const item = tab==='gear' ? byId.gearItems[kindKey][id] : byId[tab][id];
   if(!item) return;
   const box = document.getElementById('detailBox');
-  box.innerHTML = tab==='fish' ? fishDetailHtml(item) : (tab==='places'? placeDetailHtml(item) : subDetailHtml(tab,item));
+  box.innerHTML = tab==='fish' ? fishDetailHtml(item) : (tab==='places'? placeDetailHtml(item) : (tab==='gear'? gearDetailHtml(item, kindKey) : subDetailHtml(tab,item)));
   document.getElementById('overlay').classList.add('open');
   box.querySelectorAll('.close').forEach(b=>b.onclick=closeDetail);
-  box.querySelectorAll('[data-open]').forEach(el=>{
-    el.onclick = ()=>{ const [t,i]=el.dataset.open.split(':'); openDetail(t, Number(i)); };
-  });
+  bindOpenHandlers(box);
 }
 function closeDetail(){ document.getElementById('overlay').classList.remove('open'); }
 
@@ -400,8 +445,12 @@ function lureProductsForTypes(typeIds, perType){
   });
   return groups;
 }
+function placesForFish(fishId){
+  return DATA.places.filter(p => (p.fishIds||[]).includes(fishId) || (p.monsterFishIds||[]).includes(fishId));
+}
 function fishDetailHtml(item){
   const lureGroups = lureProductsForTypes(item.lureIds, 6);
+  const spots = placesForFish(item.id);
   return `
     <div class="hero">
       <button class="close">&times;</button>
@@ -423,19 +472,51 @@ function fishDetailHtml(item){
       <h3 class="section">Baits <span class="n">${item.baitIds.length} total</span></h3>
       ${specChipsBaits(item.baitIds)}
 
-      <h3 class="section">Most used baits <span class="n">top picks</span></h3>
-      ${specChipsBaits((item.baitIds||[]).slice(0,6))}
-
       <h3 class="section">Preferred lure types <span class="n">${item.lureIds.length} total</span></h3>
       ${lureTypeChips(item.lureIds)}
 
-      <h3 class="section">Most used lures <span class="n">by type, with exact specs</span></h3>
+      <h3 class="section">Lure catalog examples <span class="n">real products per type, with exact specs</span></h3>
       ${lureGroups.length? lureGroups.map(g=>`
         <div style="margin-bottom:14px;">
           <div style="font-size:12.5px; color:var(--ink-dim); margin-bottom:6px;">${escapeHtml(g.typeName)} <span style="opacity:.6">(${g.totalInType} in catalog)</span></div>
           ${g.products.length? specChipsLures(g.products.map(p=>p.id)) : '<span style="color:var(--ink-dim); font-size:12px;">no catalog items for this type yet</span>'}
         </div>
       `).join('') : '<span style="color:var(--ink-dim); font-size:12.5px;">none in this data set</span>'}
+
+      <h3 class="section">Where to catch <span class="n">${spots.length} location${spots.length===1?'':'s'}</span></h3>
+      ${spots.length? `<div class="chip-row">` + spots.map(p=>`<div class="chip" data-open="places:${p.id}">${p.image?`<img src="${p.image}">`:`<div class="noimg"></div>`}${escapeHtml(p.title)} <span style="opacity:.6; margin-left:2px;">Lv.${p.baseLevel||0}</span></div>`).join('') + `</div>` : '<span style="color:var(--ink-dim); font-size:12.5px;">no map data for this fish yet</span>'}
+    </div>
+  `;
+}
+
+function gearDetailHtml(item, kindKey){
+  const rows = [];
+  rows.push(['Level', 'Lv. ' + (item.level||0)]);
+  if(item.lureType) rows.push(['Lure type', item.lureType]);
+  if(item.baitType) rows.push(['Bait type', item.baitType]);
+  if(item.type) rows.push(['Type', item.type]);
+  if(item.color) rows.push(['Color', item.color]);
+  if(item.weight) rows.push(['Weight', item.weight + (kindKey==='hooks'||kindKey==='keepnets'?'':' g')]);
+  if(item.length) rows.push(['Length', item.length + ' cm']);
+  if(item.size) rows.push(['Size', item.size]);
+  if(item.hookSize) rows.push(['Hook size', item.hookSize]);
+  if(item.targetFish) rows.push(['Target fish', item.targetFish]);
+  if(typeof item.isBarbless === 'boolean') rows.push(['Barbless', item.isBarbless? 'Yes':'No']);
+  if(typeof item.isFishFriendly === 'boolean') rows.push(['Fish-friendly', item.isFishFriendly? 'Yes':'No']);
+  if(item.basePrice) rows.push(['Price', item.basePrice + ' game gold']);
+  if(item.baitcoinPrice) rows.push(['Baitcoin price', item.baitcoinPrice]);
+  if(item.howToGet && item.howToGet.length) rows.push(['How to get', item.howToGet.join(', ')]);
+  return `
+    <div class="hero">
+      <button class="close">&times;</button>
+      ${imgTag(item.image, item.title, 'width:150px;height:150px;object-fit:contain;background:#08181d;border-radius:4px;padding:8px;')}
+      <div class="htext">
+        <h2>${escapeHtml(item.title)}</h2>
+        <div class="latin">${escapeHtml(item.kind||'')}</div>
+      </div>
+    </div>
+    <div class="content">
+      <div class="spec-grid">${rows.map(r=>`<div class="spec-card"><div class="st"><div class="nm">${escapeHtml(r[0])}</div><div class="sp">${escapeHtml(String(r[1]))}</div></div></div>`).join('')}</div>
     </div>
   `;
 }
